@@ -1,0 +1,458 @@
+From 5d36506e35dc8231feb4aedde9581b097090c8ab Mon Sep 17 00:00:00 2001
+From: Rjoande <pietroaliprandi@gmail.com>
+Date: Mon, 12 Oct 2026 18:19:49 +0200
+Subject: [PATCH] Other mods' resources read from a list:
+ PluginData/resources.cfg says what each of the Community Resource Pack's
+ resources counts as (fuel, oxidiser, solid, monopropellant, gas, vapour, ore,
+ charge, hydrogen, or nothing), and for how much of its weight against the
+ stock one (hydrogen nearly three times kerosene, methanol half), looked up by
+ name before the guesses by name, which stay for anything not listed; a
+ VOLUMETRIC_EXPLOSIONS_RESOURCES node among the game's configs can add to it
+ or override it, as RealBattery.cfg does for that mod's batteries (a unit of
+ theirs is 3600 of the game's)
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ README.md                                |   4 +
+ build.sh                                 |   8 +-
+ src/VolumetricExplosions/Addon.cs        |   1 +
+ src/VolumetricExplosions/RealBattery.cfg |  14 ++
+ src/VolumetricExplosions/Records.cs      |   3 +-
+ src/VolumetricExplosions/Resources.cs    | 112 ++++++++++++
+ src/VolumetricExplosions/resources.cfg   | 216 +++++++++++++++++++++++
+ 7 files changed, 355 insertions(+), 3 deletions(-)
+ create mode 100644 src/VolumetricExplosions/RealBattery.cfg
+ create mode 100644 src/VolumetricExplosions/Resources.cs
+ create mode 100644 src/VolumetricExplosions/resources.cfg
+
+diff --git a/README.md b/README.md
+index e30eef4..fa41bf4 100644
+--- a/README.md
++++ b/README.md
+@@ -18,6 +18,10 @@ For Kerbal Space Program 1.12.x. It needs no other mod.
+ * **Smoke that behaves like smoke:** it rises and rolls, drifts on the wind, lies on the ground, goes round buildings
+   and is pushed about by craft.
+ * **Shock fronts, pieces and burn marks,** shadows under the smoke, and fires that burn on where fuel was spilt.
++* **Other mods' resources** count as the stock ones they are like, and for what each is worth beside it: liquid
++  hydrogen as fuel (with a clear flame, and nearly three times kerosene's fire for its weight), liquid oxygen as
++  oxidiser, argon as xenon, and so on. `PluginData/resources.cfg` lists every resource of the Community Resource
++  Pack; one not listed is guessed at by its name. With RealBattery, a battery's charge counts for all it holds.
+ * **Engines' flames and smoke,** with [Engine Flames](https://github.com/IshiakiZ/ksp-engine-flames) and
+   [Rocket Smoke](https://github.com/IshiakiZ/ksp-rocket-smoke), which are made in the same air.
+ 
+diff --git a/build.sh b/build.sh
+index dd98440..15ec5d4 100755
+--- a/build.sh
++++ b/build.sh
+@@ -27,8 +27,12 @@ build() {
+   cp "$SRC"/Textures/*.png "$SRC"/Textures/*.bin "$SRC"/Shaders/*.bundle "$OUT/PluginData/"
+   native "$OUT/PluginData"
+   others "$OUT/PluginData"
+-  # (the settings are in PluginData, which the game does not read: a .cfg anywhere else is one of the game's configs, and changing it costs a slow start)
++  # (the settings are in PluginData, which the game does not read: a .cfg anywhere else is one of the game's configs, and changing it costs a slow start;
++  # so is the list of what other mods' resources count as, which is the mod's own and is put in afresh with each build)
+   cp "$SRC/settings.cfg" "$OUT/PluginData/settings.cfg"
++  cp "$SRC/resources.cfg" "$OUT/PluginData/resources.cfg"
++  # (the one config the game does read: a ModuleManager patch that takes only with RealBattery installed, and that nobody changes)
++  cp "$SRC/RealBattery.cfg" "$OUT/RealBattery.cfg"
+ }
+ 
+ case "$MODE" in
+@@ -46,7 +50,7 @@ case "$MODE" in
+     build
+     FX="$KSP_DIR/GameData/VolumetricExplosions"
+     mkdir -p "$FX/PluginData"
+-    cp "$OUT/VolumetricExplosions.dll" "$FX/"
++    cp "$OUT/VolumetricExplosions.dll" "$OUT/RealBattery.cfg" "$FX/"
+     # (everything of the mod's is put in afresh but the player's own settings, which are kept: in PluginData, or beside the library where they used to be, from where the mod moves them itself)
+     find "$FX/PluginData" -maxdepth 1 -type f ! -name settings.cfg -delete
+     for f in "$OUT"/PluginData/*; do
+diff --git a/src/VolumetricExplosions/Addon.cs b/src/VolumetricExplosions/Addon.cs
+index 1ee41b2..0e06b0b 100644
+--- a/src/VolumetricExplosions/Addon.cs
++++ b/src/VolumetricExplosions/Addon.cs
+@@ -37,6 +37,7 @@ namespace VolumetricExplosions
+         {
+             Settings.Load();
+             if (!Settings.Enabled) { Log("switched off in settings.cfg"); enabled = false; return; }
++            Records.LoadKinds();
+             giveUpAt = Time.realtimeSinceStartup + 20f;
+         }
+ 
+diff --git a/src/VolumetricExplosions/RealBattery.cfg b/src/VolumetricExplosions/RealBattery.cfg
+new file mode 100644
+index 0000000..60efd3a
+--- /dev/null
++++ b/src/VolumetricExplosions/RealBattery.cfg
+@@ -0,0 +1,14 @@
++// Volumetric Explosions, with RealBattery: what its batteries hold counts as the electric charge it stands for.
++//
++// RealBattery keeps a battery's charge as StoredCharge, one unit of which is 3600 of the game's ElectricCharge (a
++// kilowatt-hour against a kilojoule), so a battery of its that blows up flashes for 3600 times its units. Without
++// RealBattery the same name is a capacitor's (Near Future Electrical), unit for unit, as PluginData/resources.cfg
++// has it. This node, among the game's configs, overrides that line; ModuleManager keeps it only when RealBattery is
++// installed, and without ModuleManager its name matches nothing and it is left alone.
++//
++// It is the one config of the mod's the game reads. Nobody changes it, so it costs no slow start.
++
++VOLUMETRIC_EXPLOSIONS_RESOURCES:NEEDS[RealBattery]
++{
++	StoredCharge = ElectricCharge *3600
++}
+diff --git a/src/VolumetricExplosions/Records.cs b/src/VolumetricExplosions/Records.cs
+index 4cd1527..cc8becd 100644
+--- a/src/VolumetricExplosions/Records.cs
++++ b/src/VolumetricExplosions/Records.cs
+@@ -155,7 +155,8 @@ namespace VolumetricExplosions
+             else if (name == "xenongas") d.gas += kg;
+             else if (name == "ore") d.ore += kg;
+             else if (name == "ablator" || name == "intakeair") { }
+-            // Other mods' resources, by what their names say.
++            // Other mods' resources: as resources.cfg lists them (see Resources.cs), or else by what their names say.
++            else if (Listed(d, name, kg, units)) { }
+             else if (name.Contains("hydrogen")) { d.fuel += kg; d.hydrogen = true; }
+             else if (name.Contains("oxygen") || name.Contains("oxidi") || name.Contains("nto") || name.Contains("n2o4") || name.Contains("htp") || name.Contains("nitrous")) d.oxidizer += kg;
+             else if (name.Contains("solid")) d.solid += kg;
+diff --git a/src/VolumetricExplosions/Resources.cs b/src/VolumetricExplosions/Resources.cs
+new file mode 100644
+index 0000000..6328b12
+--- /dev/null
++++ b/src/VolumetricExplosions/Resources.cs
+@@ -0,0 +1,112 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.IO;
++
++namespace VolumetricExplosions
++{
++    public static partial class Records
++    {
++        /// <summary>
++        /// What a resource counts as when a part holding it goes up. The stock ones are known by name in Sort; other
++        /// mods' are looked up here first, and only guessed at by their names when they are not listed.
++        ///
++        /// The list is PluginData/resources.cfg (one line a resource: "LqdMethane = LiquidFuel"; the kinds are the stock
++        /// resources' names, and Hydrogen, Vapour and None), and any VOLUMETRIC_EXPLOSIONS_RESOURCES node another mod
++        /// or a ModuleManager patch puts among the game's configs, which may add to it or override it (RealBattery.cfg,
++        /// beside the library, is one such: it takes only with RealBattery installed). The list is in PluginData, as
++        /// settings.cfg is, so that changing it costs the game no slow start.
++        ///
++        /// A line may end in a factor, "LqdHydrogen = Hydrogen *2.8": the resource counts for so many times its weight of
++        /// the stock one (for electric charge, so many times its units), for what it is worth beside it. Without one, as
++        /// much as it weighs.
++        /// </summary>
++        enum Kind { None, Fuel, Hydrogen, Oxidizer, Solid, Mono, Gas, Vapour, Ore, Charge }
++
++        struct Counts { public Kind kind; public double factor; }
++
++        static readonly Dictionary<string, Counts> kinds = new Dictionary<string, Counts>();
++
++        /// <summary>Read the list again, as the settings are read: at the start of each flight.</summary>
++        public static void LoadKinds()
++        {
++            kinds.Clear();
++            int read = 0;
++            try
++            {
++                string path = Settings.Folder + "PluginData/resources.cfg";
++                if (File.Exists(path))
++                {
++                    ConfigNode file = ConfigNode.Load(path);
++                    if (file != null) foreach (ConfigNode node in file.GetNodes("VOLUMETRIC_EXPLOSIONS_RESOURCES")) read += Take(node);
++                }
++                if (GameDatabase.Instance != null)
++                    foreach (ConfigNode node in GameDatabase.Instance.GetConfigNodes("VOLUMETRIC_EXPLOSIONS_RESOURCES")) read += Take(node);
++            }
++            catch (Exception ex) { Addon.Log("could not read resources.cfg (" + ex.Message + "); other mods' resources are taken by their names"); }
++            if (Settings.Log) Addon.Log(read + " of other mods' resources known by name (resources.cfg)");
++        }
++
++        static int Take(ConfigNode node)
++        {
++            int taken = 0;
++            foreach (ConfigNode.Value v in node.values)
++            {
++                if (v == null || string.IsNullOrEmpty(v.name)) continue;
++                // "Kind", or "Kind *factor".
++                string text = (v.value ?? "").Trim(), word = text;
++                double factor = 1.0;
++                int star = text.IndexOf('*');
++                if (star >= 0)
++                {
++                    word = text.Substring(0, star).Trim();
++                    if (!double.TryParse(text.Substring(star + 1).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out factor) || factor <= 0.0)
++                    {
++                        Addon.Log("resources.cfg: \"" + v.name + " = " + v.value + "\" has no factor that can be read after the *; taken as 1");
++                        factor = 1.0;
++                    }
++                }
++                Kind kind;
++                switch (word.ToLowerInvariant())
++                {
++                    case "liquidfuel": case "fuel": kind = Kind.Fuel; break;
++                    case "hydrogen": kind = Kind.Hydrogen; break;
++                    case "oxidizer": case "oxidiser": kind = Kind.Oxidizer; break;
++                    case "solidfuel": case "solid": kind = Kind.Solid; break;
++                    case "monopropellant": case "mono": kind = Kind.Mono; break;
++                    case "xenongas": case "gas": kind = Kind.Gas; break;
++                    case "vapour": case "vapor": kind = Kind.Vapour; break;
++                    case "ore": kind = Kind.Ore; break;
++                    case "electriccharge": case "charge": kind = Kind.Charge; break;
++                    case "none": case "ignore": kind = Kind.None; break;
++                    default:
++                        Addon.Log("resources.cfg: \"" + v.name + " = " + v.value + "\" names no kind this mod knows; left out");
++                        continue;
++                }
++                kinds[v.name.Trim().ToLowerInvariant()] = new Counts { kind = kind, factor = factor };
++                taken++;
++            }
++            return taken;
++        }
++
++        /// <summary>Count the resource as its listed kind, if it has one, times its factor. (As Sort does: electricity in units, everything else in kilograms.)</summary>
++        static bool Listed(Death d, string name, double kg, double units)
++        {
++            if (!kinds.TryGetValue(name, out Counts as_)) return false;
++            kg *= as_.factor;
++            switch (as_.kind)
++            {
++                case Kind.Fuel: d.fuel += kg; break;
++                case Kind.Hydrogen: d.fuel += kg; d.hydrogen = true; break;
++                case Kind.Oxidizer: d.oxidizer += kg; break;
++                case Kind.Solid: d.solid += kg; break;
++                case Kind.Mono: d.mono += kg; break;
++                case Kind.Gas: d.gas += kg; break;
++                case Kind.Vapour: d.vapour += kg; break;
++                case Kind.Ore: d.ore += kg; break;
++                case Kind.Charge: d.charge += units * as_.factor; break;
++            }
++            return true;
++        }
++    }
++}
+diff --git a/src/VolumetricExplosions/resources.cfg b/src/VolumetricExplosions/resources.cfg
+new file mode 100644
+index 0000000..9f57ad0
+--- /dev/null
++++ b/src/VolumetricExplosions/resources.cfg
+@@ -0,0 +1,216 @@
++// Volumetric Explosions: what other mods' resources count as when a part holding them blows up. Change a line,
++// save, and start a new flight.
++//
++// One line a resource: its name, and the stock resource it counts as. The kinds are the ones the mod already
++// knows (see the README): LiquidFuel, Oxidizer, SolidFuel, MonoPropellant, XenonGas (a cold burst), Ore (dust),
++// ElectricCharge (a blue-white flash, counted in units, not kilograms), and three words of this file's own:
++// Hydrogen (fuel that burns with a clear, nearly smokeless flame), Vapour (a cloud, no fire) and None (left out
++// of the reckoning, as Ablator and IntakeAir are).
++//
++// A line may end in a factor, "LqdHydrogen = Hydrogen *2.8": the resource counts for so many times its weight of the
++// stock one, for what it is worth beside it (hydrogen gives nearly three times kerosene's heat for its weight, and
++// so nearly three times the fire; methanol half). Without one, as much as it weighs. For ElectricCharge the factor
++// is on the units.
++//
++// A resource listed here is never guessed at by its name; one not listed still is, as before. Another mod, or a
++// ModuleManager patch, can add to this list or override it with a VOLUMETRIC_EXPLOSIONS_RESOURCES node of its own
++// among the game's configs (RealBattery.cfg, beside the library, is one).
++//
++// These are the resources of the Community Resource Pack (1.4.2), every one of them.
++
++VOLUMETRIC_EXPLOSIONS_RESOURCES
++{
++	// ---- fuels (burn with oxidiser into an orange fireball and dark smoke; alone, only in air), each for its heat
++	// against kerosene's, weight for weight: the light hydrocarbons a little more, the hydrazines three quarters,
++	// the alcohols half to two thirds (the watered ones less), the boranes half as much again
++	LqdMethane = LiquidFuel *1.15
++	Methane = LiquidFuel *1.15
++	Kerosene = LiquidFuel
++	Karbonite = LiquidFuel
++	Aerozine50 = LiquidFuel *0.75
++	MMH = LiquidFuel *0.75
++	UDMH = LiquidFuel *0.75
++	UH25 = LiquidFuel *0.75
++	Hydyne = LiquidFuel *0.75
++	Syntin = LiquidFuel
++	Tonka250 = LiquidFuel
++	Tonka500 = LiquidFuel
++	Furfuryl = LiquidFuel
++	Aniline = LiquidFuel
++	AvGas = LiquidFuel
++	Ethanol = LiquidFuel *0.65
++	Ethanol90 = LiquidFuel *0.6
++	Ethanol75 = LiquidFuel *0.5
++	Methanol = LiquidFuel *0.5
++	Ethane = LiquidFuel *1.1
++	Ethylene = LiquidFuel *1.1
++	Diborane = LiquidFuel *1.6
++	Pentaborane = LiquidFuel *1.6
++	Hexaborane = LiquidFuel *1.6
++	Decaborane = LiquidFuel *1.6
++	TEATEB = LiquidFuel
++
++	// ---- hydrogen and its isotopes (fuel, with a clear flame): nearly three times kerosene's heat for its weight;
++	// deuterium, twice as heavy an atom, half that; tritium about kerosene's
++	LqdHydrogen = Hydrogen *2.8
++	Hydrogen = Hydrogen *2.8
++	SolidHydrogen = Hydrogen *2.8
++	LqdDeuterium = Hydrogen *1.4
++	Deuterium = Hydrogen *1.4
++	LqdTritium = Hydrogen
++	Tritium = Hydrogen
++
++	// ---- oxidisers
++	LqdOxygen = Oxidizer
++	LqdOxygen18 = Oxidizer
++	Oxygen = Oxidizer
++	NTO = Oxidizer
++	MON1 = Oxidizer
++	MON3 = Oxidizer
++	MON10 = Oxidizer
++	MON15 = Oxidizer
++	MON20 = Oxidizer
++	MON25 = Oxidizer
++	HTP = Oxidizer
++	NitrousOxide = Oxidizer
++	IRFNA-III = Oxidizer
++	IRFNA-IV = Oxidizer
++	IWFNA = Oxidizer
++	AK20 = Oxidizer
++	AK27 = Oxidizer
++	CaveaB = Oxidizer
++	LqdFluorine = Oxidizer
++	Fluorine = Oxidizer
++	FLOX30 = Oxidizer
++	FLOX70 = Oxidizer
++	FLOX88 = Oxidizer
++	ClF3 = Oxidizer
++	ClF5 = Oxidizer
++	OF2 = Oxidizer
++	N2F4 = Oxidizer
++	Chlorine = Oxidizer
++
++	// ---- solid propellants (a white-hot flash and pale smoke)
++	HTPB = SolidFuel
++	PBAN = SolidFuel
++	PSPC = SolidFuel
++	NGNC = SolidFuel
++	HNIW = SolidFuel
++
++	// ---- monopropellant (a pale yellow fire)
++	Hydrazine = MonoPropellant
++
++	// ---- gases that do not burn (a cold white burst)
++	ArgonGas = XenonGas
++	LqdArgon = XenonGas
++	KryptonGas = XenonGas
++	LqdKrypton = XenonGas
++	LqdXenon = XenonGas
++	NeonGas = XenonGas
++	LqdNeon = XenonGas
++	Helium = XenonGas
++	Helium3 = XenonGas
++	Helium4 = XenonGas
++	LqdHelium = XenonGas
++	LqdHe3 = XenonGas
++	Nitrogen = XenonGas
++	LqdNitrogen = XenonGas
++	LqdNitrogen15 = XenonGas
++	CarbonDioxide = XenonGas
++	LqdCO2 = XenonGas
++	CarbonMonoxide = XenonGas
++	LqdCO = XenonGas
++
++	// ---- liquids that only make a cloud
++	Water = Vapour
++	WasteWater = Vapour
++	HeavyWater = Vapour
++	Ammonia = Vapour
++	LqdAmmonia = Vapour
++
++	// ---- dug-up and refined solids (dust, and no bang of their own)
++	Dirt = Ore
++	Rock = Ore
++	Regolith = Ore
++	Substrate = Ore
++	Hydrates = Ore
++	Gypsum = Ore
++	Minerals = Ore
++	ExoticMinerals = Ore
++	MetallicOre = Ore
++	Metals = Ore
++	RareMetals = Ore
++	RefinedExotics = Ore
++	Karborundum = Ore
++	Silicates = Ore
++	Silicon = Ore
++	Monazite = Ore
++	Spodumene = Ore
++	Fluorite = Ore
++	Borate = Ore
++	Nitratine = Ore
++	Salt = Ore
++	Carbon = Ore
++	Sulphur = Ore
++	Alumina = Ore
++	Aluminium = Ore
++	Boron = Ore
++	Lithium = Ore
++	Lithium6 = Ore
++	LithiumHydride = Ore
++	LithiumDeuteride = Ore
++	Sodium = Ore
++	Potassium = Ore
++	Caesium = Ore
++	Calcium = Ore
++	Magnesium = Ore
++	Lead = Ore
++	LeadBallast = Ore
++	Uraninite = Ore
++	EnrichedUranium = Ore
++	DepletedUranium = Ore
++	DepletedFuel = Ore
++	Actinides = Ore
++	UraniumNitride = Ore
++	UF4 = Ore
++	Thorium = Ore
++	ThF4 = Ore
++	Plutonium-238 = Ore
++
++	// ---- stored electricity (a blue-white flash, by the units held): a capacitor's, unit for unit. (With RealBattery
++	// the name is a battery's and a unit is 3600 of the game's: RealBattery.cfg, beside the library, says so)
++	StoredCharge = ElectricCharge
++
++	// ---- left out: intakes, supplies, parts, and what has no mass or no look of its own
++	IntakeAtm = None
++	IntakeLqd = None
++	CompressedAir = None
++	Food = None
++	Supplies = None
++	ColonySupplies = None
++	Fertilizer = None
++	Mulch = None
++	Organics = None
++	Waste = None
++	Recyclables = None
++	Chemicals = None
++	Polymers = None
++	PolyvinylChloride = None
++	Machinery = None
++	MaterialKits = None
++	SpecializedParts = None
++	SpareParts = None
++	RocketParts = None
++	Glykerol = None
++	FusionPellets = None
++	ResourceLode = None
++	SolarWind = None
++	VacuumPlasma = None
++	Antimatter = None
++	AntiHydrogen = None
++	ExoticMatter = None
++	ChargedParticles = None
++	Megajoules = None
++	ThermalPower = None
++	WasteHeat = None
++}
+-- 
+2.53.0.windows.2
+
